@@ -1,21 +1,5 @@
 #################################
-# 1. RDS Subnet Group
-#################################
-resource "aws_db_subnet_group" "strapi_db_subnet_group" {
-  name       = "khaleel-strapi-db-subnet-group"
-  subnet_ids = data.aws_subnets.default.ids
-
-  tags = {
-    Name = "khaleel-db-subnet-group"
-  }
-
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-#################################
-# 2. RDS Security Group
+# 1. RDS Security Group
 #################################
 resource "aws_security_group" "rds_sg" {
   name        = "khaleel-rds-sg"
@@ -39,14 +23,10 @@ resource "aws_security_group" "rds_sg" {
   tags = {
     Name = "khaleel-rds-sg"
   }
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 #################################
-# 3. RDS PostgreSQL Instance
+# 2. RDS PostgreSQL Instance
 #################################
 resource "aws_db_instance" "strapi_db" {
   identifier              = "khaleel-strapi-db"
@@ -55,12 +35,17 @@ resource "aws_db_instance" "strapi_db" {
   instance_class          = "db.t3.micro"
   allocated_storage       = 20
   storage_type            = "gp3"
-  db_name                 = "strapidb"
-  username                = "strapiadmin"
-  password                = random_password.db_password.result
-  db_subnet_group_name    = aws_db_subnet_group.strapi_db_subnet_group.name
-  vpc_security_group_ids  = [aws_security_group.rds_sg.id]
-  publicly_accessible     = true
+
+  db_name  = "strapidb"
+  username = "strapiadmin"
+  password = random_password.db_password.result
+
+  # ✅ USE DEFAULT SUBNET GROUP (NO CONFLICT)
+  db_subnet_group_name = "default"
+
+  vpc_security_group_ids = [aws_security_group.rds_sg.id]
+  publicly_accessible   = true
+
   skip_final_snapshot     = true
   backup_retention_period = 7
   backup_window           = "03:00-04:00"
@@ -69,14 +54,10 @@ resource "aws_db_instance" "strapi_db" {
   tags = {
     Name = "khaleel-strapi-db"
   }
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 #################################
-# 4. Random Password for RDS
+# 3. Random Password for RDS
 #################################
 resource "random_password" "db_password" {
   length           = 16
