@@ -2,8 +2,7 @@ name: Deploy to ECS
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 env:
   AWS_REGION: ap-south-1
@@ -16,6 +15,9 @@ env:
 jobs:
   terraform-apply:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
     
     steps:
     - name: Checkout
@@ -69,7 +71,7 @@ jobs:
 
     - name: Push Docker image to ECR
       run: |
-        docker push 301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+        docker push 301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSitORY }}:${{ github.sha }}
         docker push 301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
 
     - name: Save image info
@@ -159,8 +161,6 @@ jobs:
 
     - name: Monitor deployment
       run: |
-        echo "Monitoring deployment..."
-        
         for i in {1..60}; do
           STATUS=$(aws deploy get-deployment \
             --deployment-id ${{ env.DEPLOYMENT_ID }} \
@@ -170,32 +170,30 @@ jobs:
           echo "Status ($i/60): $STATUS"
           
           if [ "$STATUS" = "Succeeded" ]; then
-            echo "✅ Deployment successful!"
+            echo "Deployment successful!"
             
             ALB_DNS=$(aws elbv2 describe-load-balancers \
               --names khaleel-strapi-alb \
               --query 'LoadBalancers[0].DNSName' \
               --output text)
             
-            echo "🌐 Application URL: http://$ALB_DNS"
+            echo "Application URL: http://$ALB_DNS"
             exit 0
             
           elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Stopped" ]; then
-            echo "❌ Deployment failed!"
+            echo "Deployment failed!"
             exit 1
           fi
           
           sleep 10
         done
         
-        echo "⏰ Deployment timeout"
+        echo "Deployment timeout"
         exit 1
 
     - name: Rollback on failure
       if: failure()
       run: |
-        echo "Rolling back..."
-        
         aws deploy stop-deployment --deployment-id ${{ env.DEPLOYMENT_ID }}
         
         PREV_TASK=$(aws ecs describe-task-definitions \
@@ -204,15 +202,9 @@ jobs:
           --output text)
         
         if [ -n "$PREV_TASK" ]; then
-          echo "Rolling back to: $PREV_TASK"
-          
           aws ecs update-service \
             --cluster ${{ env.ECS_CLUSTER }} \
             --service ${{ env.ECS_SERVICE }} \
             --task-definition $PREV_TASK \
             --force-new-deployment
-          
-          echo "✅ Rollback initiated"
-        else
-          echo "No previous version found"
         fi
