@@ -6,166 +6,104 @@ on:
 
 env:
   AWS_REGION: ap-south-1
+  AWS_ACCOUNT_ID: 301782007642
   ECR_REPOSITORY: khaleel-strapi-app
+  ECR_REGISTRY: 301782007642.dkr.ecr.ap-south-1.amazonaws.com
   ECS_CLUSTER: khaleel-strapi-cluster
   ECS_SERVICE: khaleel-strapi-service
-  CONTAINER_NAME: khaleel-strapi-container
   S3_BUCKET: bucket-mku
 
 jobs:
-  terraform-apply:
+# ------------------ TERRAFORM ------------------
+  terraform:
     runs-on: ubuntu-latest
-    defaults:  # ⬅️ ADD THIS SECTION
+    defaults:
       run:
-        working-directory: ./Terraform  # ⬅️ RUN IN TERRAFORM FOLDER
-    
+        working-directory: terraform
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
+      - uses: hashicorp/setup-terraform@v2
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Terraform Init
-      run: terraform init  # ⬅️ Now runs in Terraform/ folder
+      - name: Terraform Init
+        run: terraform init
 
-    - name: Terraform Apply
-      run: terraform apply -auto-approve  # ⬅️ Now runs in Terraform/ folder
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
 
-  build-and-push:
-    needs: terraform-apply
+# ------------------ BUILD & PUSH ------------------
+  build:
+    needs: terraform
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build Docker image
-      run: |
-        docker build -t ${{ env.ECR_REPOSITORY }}:${{ github.sha }} .
+      - name: Build image
+        run: |
+          docker build -t $ECR_REPOSITORY:${{ github.sha }} .
 
-    - name: Tag Docker image
-      run: |
-        docker tag ${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
-          301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-        docker tag ${{ env.ECR_REPOSitORY }}:${{ github.sha }} \
-          301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+      - name: Tag & push image
+        run: |
+          docker tag $ECR_REPOSITORY:${{ github.sha }} $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          echo "IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" >> $GITHUB_ENV
 
-    - name: Push Docker image to ECR
-      run: |
-        docker push 301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-        docker push 301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
-
-    - name: Save image info
-      run: |
-        echo "IMAGE=301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> $GITHUB_ENV
-
+# ------------------ DEPLOY ------------------
   deploy:
-    needs: build-and-push
+    needs: build
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Update task definition with new image
-      id: update-task-def
-      run: |
-        sed "s|IMAGE_PLACEHOLDER|${{ env.IMAGE }}|g" .aws/task-definition.json > updated-task-definition.json
-        aws ecs register-task-definition --cli-input-json file://updated-task-definition.json
-        TASK_DEF_ARN=$(aws ecs describe-task-definitions --task-definition khaleel-strapi-task --query 'taskDefinitions[0].taskDefinitionArn' --output text)
-        echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
+      - name: Register new task definition
+        run: |
+          sed "s|IMAGE_PLACEHOLDER|${IMAGE}|g" .aws/task-definition.json > task-def.json
+          aws ecs register-task-definition --cli-input-json file://task-def.json
 
-    - name: Get subnet and security group IDs
-      id: get-ids
-      run: |
-        SUBNETS=$(aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" --query 'Subnets[:2].SubnetId' --output json)
-        SG_ID=$(aws ec2 describe-security-groups --group-names khaleel-ecs-sg --query 'SecurityGroups[0].GroupId' --output text)
-        echo "SUBNETS=$SUBNETS" >> $GITHUB_ENV
-        echo "SG_ID=$SG_ID" >> $GITHUB_ENV
+      - name: Get task definition ARN
+        run: |
+          ARN=$(aws ecs describe-task-definition \
+            --task-definition khaleel-strapi-task \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "TASK_DEF_ARN=$ARN" >> $GITHUB_ENV
 
-    - name: Update AppSpec template
-      id: update-appspec
-      run: |
-        sed "s|<TASK_DEFINITION>|${{ env.TASK_DEF_ARN }}|g" .aws/appspec.yaml | \
-        sed "s|\"<SUBNETS>\"|${{ env.SUBNETS }}|g" | \
-        sed "s|\"<SECURITY_GROUPS>\"|[\"${{ env.SG_ID }}\"]|g" > appspec-final.yaml
+      - name: Prepare AppSpec
+        run: |
+          sed "s|<TASK_DEFINITION>|${TASK_DEF_ARN}|g" .aws/appspec.yaml > appspec-final.yaml
 
-    - name: Upload deployment files to S3
-      id: upload-s3
-      run: |
-        TIMESTAMP=$(date +%Y%m%d%H%M%S)
-        aws s3 cp updated-task-definition.json s3://${{ env.S3_BUCKET }}/deployments/$TIMESTAMP/task-definition.json
-        aws s3 cp appspec-final.yaml s3://${{ env.S3_BUCKET }}/deployments/$TIMESTAMP/appspec.yaml
-        echo "S3_KEY=deployments/$TIMESTAMP/appspec.yaml" >> $GITHUB_ENV
+      - name: Upload to S3
+        run: |
+          TS=$(date +%Y%m%d%H%M%S)
+          aws s3 cp appspec-final.yaml s3://$S3_BUCKET/deployments/$TS/appspec.yaml
+          echo "S3_KEY=deployments/$TS/appspec.yaml" >> $GITHUB_ENV
 
-    - name: Trigger CodeDeploy Blue/Green Deployment
-      id: codedeploy
-      run: |
-        DEPLOYMENT_ID=$(aws deploy create-deployment \
-          --application-name khaleel-strapi-app \
-          --deployment-group-name khaleel-strapi-dg \
-          --revision '{
-            "revisionType": "S3",
-            "s3Location": {
-              "bucket": "'${{ env.S3_BUCKET }}'",
-              "key": "'${{ env.S3_KEY }}'",
-              "bundleType": "YAML"
-            }
-          }' \
-          --query 'deploymentId' \
-          --output text)
-        echo "DEPLOYMENT_ID=$DEPLOYMENT_ID" >> $GITHUB_ENV
-
-    - name: Monitor deployment
-      run: |
-        for i in {1..60}; do
-          STATUS=$(aws deploy get-deployment --deployment-id ${{ env.DEPLOYMENT_ID }} --query 'deploymentInfo.status' --output text)
-          echo "Status ($i/60): $STATUS"
-          if [ "$STATUS" = "Succeeded" ]; then
-            echo "Deployment successful!"
-            ALB_DNS=$(aws elbv2 describe-load-balancers --names khaleel-strapi-alb --query 'LoadBalancers[0].DNSName' --output text)
-            echo "Application URL: http://$ALB_DNS"
-            exit 0
-          elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Stopped" ]; then
-            echo "Deployment failed!"
-            exit 1
-          fi
-          sleep 10
-        done
-        echo "Deployment timeout"
-        exit 1
-
-    - name: Rollback on failure
-      if: failure()
-      run: |
-        aws deploy stop-deployment --deployment-id ${{ env.DEPLOYMENT_ID }}
-        PREV_TASK=$(aws ecs describe-task-definitions --task-definition khaleel-strapi-task --query 'taskDefinitions[1].taskDefinitionArn' --output text)
-        if [ -n "$PREV_TASK" ]; then
-          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --task-definition $PREV_TASK --force-new-deployment
-        fi
+      - name: Trigger CodeDeploy
+        run: |
+          aws deploy create-deployment \
+            --application-name khaleel-strapi-app \
+            --deployment-group-name khaleel-strapi-dg \
+            --revision "revisionType=S3,s3Location={bucket=$S3_BUCKET,key=$S3_KEY,bundleType=YAML}"
