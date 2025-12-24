@@ -14,75 +14,61 @@ env:
   S3_BUCKET: bucket-mku
 
 jobs:
-# ------------------ TERRAFORM ------------------
+  # ------------------ TERRAFORM ------------------
   terraform:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: Terraform
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: hashicorp/setup-terraform@v2
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
       - name: Terraform Init
         run: terraform init
-
       - name: Terraform Apply
         run: terraform apply -auto-approve
 
-# ------------------ BUILD & PUSH ------------------
+  # ------------------ BUILD & PUSH ------------------
   build:
     needs: terraform
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
       - uses: aws-actions/amazon-ecr-login@v2
-
       - name: Build image
         run: |
           docker build -t $ECR_REPOSITORY:${{ github.sha }} .
-
       - name: Tag & push image
         run: |
           docker tag $ECR_REPOSITORY:${{ github.sha }} $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
           echo "IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" >> $GITHUB_ENV
 
-# ------------------ DEPLOY ------------------
+  # ------------------ DEPLOY ------------------
   deploy:
     needs: build
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
       - name: Register new task definition
         run: |
           sed "s|IMAGE_PLACEHOLDER|${IMAGE}|g" .aws/task-definition.json > task-def.json
           aws ecs register-task-definition --cli-input-json file://task-def.json
-
       - name: Get task definition ARN
         run: |
           ARN=$(aws ecs describe-task-definition \
@@ -90,17 +76,14 @@ jobs:
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
           echo "TASK_DEF_ARN=$ARN" >> $GITHUB_ENV
-
       - name: Prepare AppSpec
         run: |
           sed "s|<TASK_DEFINITION>|${TASK_DEF_ARN}|g" .aws/appspec.yaml > appspec-final.yaml
-
       - name: Upload to S3
         run: |
           TS=$(date +%Y%m%d%H%M%S)
           aws s3 cp appspec-final.yaml s3://$S3_BUCKET/deployments/$TS/appspec.yaml
           echo "S3_KEY=deployments/$TS/appspec.yaml" >> $GITHUB_ENV
-
       - name: Trigger CodeDeploy
         run: |
           aws deploy create-deployment \
