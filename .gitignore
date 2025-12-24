@@ -1,0 +1,20 @@
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# OS files
+.DS_Store
+
+# Terraform state (keep folder)
+Terraform/.terraform/
+Terraform/terraform.tfstate
+Terraform/terraform.tfstate.backup
+Terraform/.terraform.lock.hcl
+
+# Docker logs or environment files
+*.log
+*.env
+
+# VSCode
+.vscode/

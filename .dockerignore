@@ -1,0 +1,21 @@
+# Node.js dependencies
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Build outputs
+build
+dist
+
+# OS files
+.DS_Store
+
+# Git files
+.git
+.gitignore
+
+# Terraform state files
+Terraform/.terraform
+Terraform/terraform.tfstate
+Terraform/terraform.tfstate.backup
+Terraform/.terraform.lock.hcl
