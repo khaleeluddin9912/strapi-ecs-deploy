@@ -15,6 +15,9 @@ env:
 jobs:
   terraform-apply:
     runs-on: ubuntu-latest
+    defaults:  # ⬅️ ADD THIS SECTION
+      run:
+        working-directory: ./Terraform  # ⬅️ RUN IN TERRAFORM FOLDER
     
     steps:
     - name: Checkout
@@ -31,10 +34,10 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
 
     - name: Terraform Init
-      run: terraform init
+      run: terraform init  # ⬅️ Now runs in Terraform/ folder
 
     - name: Terraform Apply
-      run: terraform apply -auto-approve
+      run: terraform apply -auto-approve  # ⬅️ Now runs in Terraform/ folder
 
   build-and-push:
     needs: terraform-apply
@@ -63,7 +66,7 @@ jobs:
       run: |
         docker tag ${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
           301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-        docker tag ${{ env.ECR_REPOSITORY }}:${{ github.sha }} \
+        docker tag ${{ env.ECR_REPOSitORY }}:${{ github.sha }} \
           301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
 
     - name: Push Docker image to ECR
