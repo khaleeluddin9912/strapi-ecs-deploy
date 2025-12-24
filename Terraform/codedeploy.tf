@@ -3,7 +3,6 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
   deployment_group_name = "khaleel-strapi-dg"
   service_role_arn      = data.aws_iam_role.codedeploy_role.arn
 
-  # ✅ REQUIRED FOR ECS (THIS WAS MISSING)
   deployment_config_name = "CodeDeployDefault.ECSCanary10Percent5Minutes"
 
   auto_rollback_configuration {
@@ -18,8 +17,7 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
 
   blue_green_deployment_config {
     deployment_ready_option {
-      action_on_timeout    = "CONTINUE_DEPLOYMENT"
-      wait_time_in_minutes = 0
+      action_on_timeout = "CONTINUE_DEPLOYMENT"
     }
 
     terminate_blue_instances_on_deployment_success {
@@ -50,6 +48,7 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
   }
 
   depends_on = [
+    aws_codedeploy_app.khaleel_strapi_app,
     aws_ecs_service.khaleel_strapi_service,
     aws_lb_listener.http
   ]
