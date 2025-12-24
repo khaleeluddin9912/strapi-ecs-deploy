@@ -1,3 +1,14 @@
+#################################
+# CodeDeploy Application (ECS)
+#################################
+resource "aws_codedeploy_app" "khaleel_strapi_app" {
+  name             = "khaleel-strapi-app"
+  compute_platform = "ECS"
+}
+
+#################################
+# CodeDeploy Deployment Group
+#################################
 resource "aws_codedeploy_deployment_group" "strapi_dg" {
   app_name              = aws_codedeploy_app.khaleel_strapi_app.name
   deployment_group_name = "khaleel-strapi-dg"
