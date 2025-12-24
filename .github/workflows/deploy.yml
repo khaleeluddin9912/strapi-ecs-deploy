@@ -15,9 +15,6 @@ env:
 jobs:
   terraform-apply:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./terraform
     
     steps:
     - name: Checkout
@@ -71,7 +68,7 @@ jobs:
 
     - name: Push Docker image to ECR
       run: |
-        docker push 301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSitORY }}:${{ github.sha }}
+        docker push 301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
         docker push 301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
 
     - name: Save image info
@@ -97,29 +94,15 @@ jobs:
       id: update-task-def
       run: |
         sed "s|IMAGE_PLACEHOLDER|${{ env.IMAGE }}|g" .aws/task-definition.json > updated-task-definition.json
-        
         aws ecs register-task-definition --cli-input-json file://updated-task-definition.json
-        
-        TASK_DEF_ARN=$(aws ecs describe-task-definitions \
-          --task-definition khaleel-strapi-task \
-          --query 'taskDefinitions[0].taskDefinitionArn' \
-          --output text)
-        
+        TASK_DEF_ARN=$(aws ecs describe-task-definitions --task-definition khaleel-strapi-task --query 'taskDefinitions[0].taskDefinitionArn' --output text)
         echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
 
     - name: Get subnet and security group IDs
       id: get-ids
       run: |
-        SUBNETS=$(aws ec2 describe-subnets \
-          --filters "Name=default-for-az,Values=true" \
-          --query 'Subnets[:2].SubnetId' \
-          --output json)
-        
-        SG_ID=$(aws ec2 describe-security-groups \
-          --group-names khaleel-ecs-sg \
-          --query 'SecurityGroups[0].GroupId' \
-          --output text)
-        
+        SUBNETS=$(aws ec2 describe-subnets --filters "Name=default-for-az,Values=true" --query 'Subnets[:2].SubnetId' --output json)
+        SG_ID=$(aws ec2 describe-security-groups --group-names khaleel-ecs-sg --query 'SecurityGroups[0].GroupId' --output text)
         echo "SUBNETS=$SUBNETS" >> $GITHUB_ENV
         echo "SG_ID=$SG_ID" >> $GITHUB_ENV
 
@@ -134,10 +117,8 @@ jobs:
       id: upload-s3
       run: |
         TIMESTAMP=$(date +%Y%m%d%H%M%S)
-        
         aws s3 cp updated-task-definition.json s3://${{ env.S3_BUCKET }}/deployments/$TIMESTAMP/task-definition.json
         aws s3 cp appspec-final.yaml s3://${{ env.S3_BUCKET }}/deployments/$TIMESTAMP/appspec.yaml
-        
         echo "S3_KEY=deployments/$TIMESTAMP/appspec.yaml" >> $GITHUB_ENV
 
     - name: Trigger CodeDeploy Blue/Green Deployment
@@ -156,38 +137,24 @@ jobs:
           }' \
           --query 'deploymentId' \
           --output text)
-        
         echo "DEPLOYMENT_ID=$DEPLOYMENT_ID" >> $GITHUB_ENV
 
     - name: Monitor deployment
       run: |
         for i in {1..60}; do
-          STATUS=$(aws deploy get-deployment \
-            --deployment-id ${{ env.DEPLOYMENT_ID }} \
-            --query 'deploymentInfo.status' \
-            --output text)
-          
+          STATUS=$(aws deploy get-deployment --deployment-id ${{ env.DEPLOYMENT_ID }} --query 'deploymentInfo.status' --output text)
           echo "Status ($i/60): $STATUS"
-          
           if [ "$STATUS" = "Succeeded" ]; then
             echo "Deployment successful!"
-            
-            ALB_DNS=$(aws elbv2 describe-load-balancers \
-              --names khaleel-strapi-alb \
-              --query 'LoadBalancers[0].DNSName' \
-              --output text)
-            
+            ALB_DNS=$(aws elbv2 describe-load-balancers --names khaleel-strapi-alb --query 'LoadBalancers[0].DNSName' --output text)
             echo "Application URL: http://$ALB_DNS"
             exit 0
-            
           elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Stopped" ]; then
             echo "Deployment failed!"
             exit 1
           fi
-          
           sleep 10
         done
-        
         echo "Deployment timeout"
         exit 1
 
@@ -195,16 +162,7 @@ jobs:
       if: failure()
       run: |
         aws deploy stop-deployment --deployment-id ${{ env.DEPLOYMENT_ID }}
-        
-        PREV_TASK=$(aws ecs describe-task-definitions \
-          --task-definition khaleel-strapi-task \
-          --query 'taskDefinitions[1].taskDefinitionArn' \
-          --output text)
-        
+        PREV_TASK=$(aws ecs describe-task-definitions --task-definition khaleel-strapi-task --query 'taskDefinitions[1].taskDefinitionArn' --output text)
         if [ -n "$PREV_TASK" ]; then
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --task-definition $PREV_TASK \
-            --force-new-deployment
+          aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --task-definition $PREV_TASK --force-new-deployment
         fi
