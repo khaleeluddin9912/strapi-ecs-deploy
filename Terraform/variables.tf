@@ -7,6 +7,7 @@ variable "aws_region" {
 variable "image_uri" {
   description = "Full ECR image URI with tag"
   type        = string
+  default     = "301782007642.dkr.ecr.ap-south-1.amazonaws.com/khaleel-strapi-app:latest"
 }
 
 variable "environment" {
