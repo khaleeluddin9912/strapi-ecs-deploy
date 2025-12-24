@@ -76,11 +76,3 @@ resource "aws_codedeploy_deployment_group" "strapi_dg" {
     aws_lb_listener.http
   ]
 }
-
-#################################
-# 3. IAM Policy Attachment for CodeDeploy
-#################################
-resource "aws_iam_role_policy_attachment" "codedeploy_ecs_policy" {
-  role       = data.aws_iam_role.codedeploy_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AWSCodeDeployRoleForECS"
-}
