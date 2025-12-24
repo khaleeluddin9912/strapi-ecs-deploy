@@ -1,8 +1,9 @@
-name: Deploy to ECS with Blue/Green
+name: Deploy to ECS
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 env:
   AWS_REGION: ap-south-1
@@ -75,7 +76,7 @@ jobs:
       run: |
         echo "IMAGE=301782007642.dkr.ecr.ap-south-1.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> $GITHUB_ENV
 
-  blue-green-deploy:
+  deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     
@@ -90,16 +91,13 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Update task definition template
+    - name: Update task definition with new image
       id: update-task-def
       run: |
-        # Replace IMAGE_PLACEHOLDER with actual image
-        sed "s|IMAGE_PLACEHOLDER|${{ env.IMAGE }}|g" task-definition.json > updated-task-definition.json
+        sed "s|IMAGE_PLACEHOLDER|${{ env.IMAGE }}|g" .aws/task-definition.json > updated-task-definition.json
         
-        # Register new task definition
         aws ecs register-task-definition --cli-input-json file://updated-task-definition.json
         
-        # Get new task definition ARN
         TASK_DEF_ARN=$(aws ecs describe-task-definitions \
           --task-definition khaleel-strapi-task \
           --query 'taskDefinitions[0].taskDefinitionArn' \
@@ -110,13 +108,11 @@ jobs:
     - name: Get subnet and security group IDs
       id: get-ids
       run: |
-        # Get subnet IDs
         SUBNETS=$(aws ec2 describe-subnets \
           --filters "Name=default-for-az,Values=true" \
           --query 'Subnets[:2].SubnetId' \
           --output json)
         
-        # Get security group ID
         SG_ID=$(aws ec2 describe-security-groups \
           --group-names khaleel-ecs-sg \
           --query 'SecurityGroups[0].GroupId' \
@@ -128,30 +124,23 @@ jobs:
     - name: Update AppSpec template
       id: update-appspec
       run: |
-        # Replace placeholders in appspec
-        sed "s|<TASK_DEFINITION>|${{ env.TASK_DEF_ARN }}|g" appspec.yml | \
+        sed "s|<TASK_DEFINITION>|${{ env.TASK_DEF_ARN }}|g" .aws/appspec.yaml | \
         sed "s|\"<SUBNETS>\"|${{ env.SUBNETS }}|g" | \
-        sed "s|\"<SECURITY_GROUPS>\"|[\"${{ env.SG_ID }}\"]|g" > appspec-final.yml
-        
-        cat appspec-final.yml
+        sed "s|\"<SECURITY_GROUPS>\"|[\"${{ env.SG_ID }}\"]|g" > appspec-final.yaml
 
     - name: Upload deployment files to S3
       id: upload-s3
       run: |
-        # Create timestamp for unique deployment
         TIMESTAMP=$(date +%Y%m%d%H%M%S)
         
-        # Upload updated files to S3
         aws s3 cp updated-task-definition.json s3://${{ env.S3_BUCKET }}/deployments/$TIMESTAMP/task-definition.json
-        aws s3 cp appspec-final.yml s3://${{ env.S3_BUCKET }}/deployments/$TIMESTAMP/appspec.yml
+        aws s3 cp appspec-final.yaml s3://${{ env.S3_BUCKET }}/deployments/$TIMESTAMP/appspec.yaml
         
-        echo "S3_KEY=deployments/$TIMESTAMP/appspec.yml" >> $GITHUB_ENV
-        echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_ENV
+        echo "S3_KEY=deployments/$TIMESTAMP/appspec.yaml" >> $GITHUB_ENV
 
     - name: Trigger CodeDeploy Blue/Green Deployment
       id: codedeploy
       run: |
-        # Trigger CodeDeploy with S3 location
         DEPLOYMENT_ID=$(aws deploy create-deployment \
           --application-name khaleel-strapi-app \
           --deployment-group-name khaleel-strapi-dg \
@@ -167,11 +156,10 @@ jobs:
           --output text)
         
         echo "DEPLOYMENT_ID=$DEPLOYMENT_ID" >> $GITHUB_ENV
-        echo "Blue/Green deployment started with ID: $DEPLOYMENT_ID"
 
-    - name: Monitor Blue/Green Deployment
+    - name: Monitor deployment
       run: |
-        echo "Monitoring Blue/Green deployment..."
+        echo "Monitoring deployment..."
         
         for i in {1..60}; do
           STATUS=$(aws deploy get-deployment \
@@ -182,19 +170,18 @@ jobs:
           echo "Status ($i/60): $STATUS"
           
           if [ "$STATUS" = "Succeeded" ]; then
-            echo "✅ Blue/Green deployment successful!"
+            echo "✅ Deployment successful!"
             
-            # Get current target group
             ALB_DNS=$(aws elbv2 describe-load-balancers \
               --names khaleel-strapi-alb \
               --query 'LoadBalancers[0].DNSName' \
               --output text)
             
-            echo "🌐 Application is now live at: http://$ALB_DNS"
+            echo "🌐 Application URL: http://$ALB_DNS"
             exit 0
             
           elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Stopped" ]; then
-            echo "❌ Blue/Green deployment failed!"
+            echo "❌ Deployment failed!"
             exit 1
           fi
           
@@ -204,53 +191,28 @@ jobs:
         echo "⏰ Deployment timeout"
         exit 1
 
-    - name: Rollback on Failure
+    - name: Rollback on failure
       if: failure()
       run: |
-        echo "🔄 Initiating rollback for Blue/Green deployment..."
+        echo "Rolling back..."
         
-        # Stop the failed deployment
         aws deploy stop-deployment --deployment-id ${{ env.DEPLOYMENT_ID }}
         
-        # Get previous task definition ARN
         PREV_TASK=$(aws ecs describe-task-definitions \
           --task-definition khaleel-strapi-task \
           --query 'taskDefinitions[1].taskDefinitionArn' \
           --output text)
         
         if [ -n "$PREV_TASK" ]; then
-          echo "Rolling back to previous task definition: $PREV_TASK"
+          echo "Rolling back to: $PREV_TASK"
           
-          # Create rollback AppSpec
-          cat > rollback-appspec.yml <<EOF
-          version: 0.0
-          Resources:
-            - TargetService:
-                Type: AWS::ECS::Service
-                Properties:
-                  TaskDefinition: "$PREV_TASK"
-                  LoadBalancerInfo:
-                    ContainerName: "khaleel-strapi-container"
-                    ContainerPort: 1337
-          EOF
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --task-definition $PREV_TASK \
+            --force-new-deployment
           
-          # Upload rollback AppSpec to S3
-          aws s3 cp rollback-appspec.yml s3://${{ env.S3_BUCKET }}/rollback/appspec.yml
-          
-          # Trigger rollback deployment
-          aws deploy create-deployment \
-            --application-name khaleel-strapi-app \
-            --deployment-group-name khaleel-strapi-dg \
-            --revision '{
-              "revisionType": "S3",
-              "s3Location": {
-                "bucket": "'${{ env.S3_BUCKET }}'",
-                "key": "rollback/appspec.yml",
-                "bundleType": "YAML"
-              }
-            }'
-          
-          echo "✅ Rollback deployment triggered"
+          echo "✅ Rollback initiated"
         else
-          echo "⚠️ No previous version found for rollback"
+          echo "No previous version found"
         fi
