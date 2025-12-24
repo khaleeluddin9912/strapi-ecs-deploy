@@ -4,6 +4,11 @@ variable "aws_region" {
   default     = "ap-south-1"
 }
 
+variable "image_uri" {
+  description = "Full ECR image URI with tag"
+  type        = string
+}
+
 variable "environment" {
   description = "Environment name"
   type        = string
