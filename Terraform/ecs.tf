@@ -14,6 +14,19 @@ resource "aws_cloudwatch_log_group" "khaleel_strapi_logs" {
 }
 
 #################################
+# 3. ECS Cluster (FIXED)
+#################################
+resource "aws_ecs_cluster" "khaleel_strapi_cluster" {
+  name = "khaleel-strapi-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+}
+
+
+#################################
 # 4. ECS Task Definition (INFRA ONLY)
 #################################
 resource "aws_ecs_task_definition" "khaleel_strapi_task" {
@@ -26,7 +39,7 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   execution_role_arn = data.aws_iam_role.ecs_execution.arn
   task_role_arn      = data.aws_iam_role.ecs_execution.arn
 
-  # ✅ REQUIRED by Terraform (dummy)
+  # Dummy container definition required by Terraform
   container_definitions = jsonencode([])
 
   lifecycle {
@@ -35,7 +48,6 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
     ]
   }
 }
-
 
 #################################
 # 5. ECS Service (Blue/Green)
@@ -75,6 +87,7 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
   }
 
   depends_on = [
+    aws_ecs_cluster.khaleel_strapi_cluster,  # ✅ ensure cluster exists first
     aws_lb_target_group.strapi_blue,
     aws_lb_target_group.strapi_green,
     aws_lb_listener.http
