@@ -1,18 +1,15 @@
-#################################
-# ECS Cluster
-#################################
+data "aws_ecr_repository" "khaleel_strapi_app" {
+  name = "khaleel-strapi-app"
+}
+
 resource "aws_ecs_cluster" "khaleel_strapi_cluster" {
   name = "khaleel-strapi-cluster"
-
   setting {
     name  = "containerInsights"
     value = "enabled"
   }
 }
 
-#################################
-# ECS Task Definition
-#################################
 resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   family                   = "khaleel-strapi-task"
   requires_compatibilities = ["FARGATE"]
@@ -23,55 +20,17 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   execution_role_arn = data.aws_iam_role.ecs_execution.arn
   task_role_arn      = data.aws_iam_role.ecs_execution.arn
 
-  container_definitions = jsonencode([
-    {
-      name      = "khaleel-strapi-container"
-      image     = var.image_uri
-      essential = true
-
-      portMappings = [
-        {
-          containerPort = 1337
-          protocol      = "tcp"
-        }
-      ]
-
-      environment = [
-        { name = "NODE_ENV", value = "production" },
-        { name = "HOST", value = "0.0.0.0" },
-        { name = "PORT", value = "1337" },
-
-        { name = "DATABASE_CLIENT", value = "postgres" },
-        { name = "DATABASE_HOST", value = "khaleel-strapi-db.cxxxx.ap-south-1.rds.amazonaws.com" },
-        { name = "DATABASE_PORT", value = "5432" },
-        { name = "DATABASE_NAME", value = "strapidb" },
-        { name = "DATABASE_USERNAME", value = "strapiadmin" },
-        { name = "DATABASE_PASSWORD", value = "REPLACE_WITH_REAL_PASSWORD" }
-      ]
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = "/ecs/khaleel-strapi-app"
-          awslogs-region        = "ap-south-1"
-          awslogs-stream-prefix = "ecs"
-        }
-      }
-
-      healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:1337 || exit 1"]
-        interval    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 60
-      }
-    }
-  ])
+  container_definitions = templatefile("${path.module}/.aws/task-definition.json", {
+    IMAGE_URI        = var.image_uri
+    DATABASE_HOST    = aws_db_instance.strapi_db.address
+    DATABASE_PASS    = random_password.db_password.result
+    APP_KEYS         = "REPLACE_WITH_REAL_APP_KEYS"
+    API_TOKEN_SALT   = "REPLACE_WITH_REAL_API_TOKEN"
+    ADMIN_JWT_SECRET = "REPLACE_WITH_REAL_ADMIN_JWT"
+    JWT_SECRET       = "REPLACE_WITH_REAL_JWT_SECRET"
+  })
 }
 
-#################################
-# ECS Service (CodeDeploy Blue/Green)
-#################################
 resource "aws_ecs_service" "khaleel_strapi_service" {
   name            = "khaleel-strapi-service"
   cluster         = aws_ecs_cluster.khaleel_strapi_cluster.id
@@ -79,9 +38,7 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
   desired_count   = 1
   launch_type     = "FARGATE"
 
-  deployment_controller {
-    type = "CODE_DEPLOY"
-  }
+  deployment_controller { type = "CODE_DEPLOY" }
 
   health_check_grace_period_seconds = 120
   enable_execute_command            = true
@@ -99,10 +56,5 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
     container_port   = 1337
   }
 
-  lifecycle {
-    ignore_changes = [
-      task_definition,
-      load_balancer
-    ]
-  }
+  lifecycle { ignore_changes = [task_definition, load_balancer] }
 }

@@ -1,42 +1,27 @@
-#################################
-# AWS Region
-#################################
 variable "aws_region" {
   description = "AWS region for all resources"
   type        = string
   default     = "ap-south-1"
 }
 
-#################################
-# ECS Image URI (Injected by GitHub Actions)
-#################################
 variable "image_uri" {
   description = "Full ECR image URI with tag"
   type        = string
-  default     = "301782007642.dkr.ecr.ap-south-1.amazonaws.com/khaleel-strapi-app:dummy"
+  default     = "301782007642.dkr.ecr.ap-south-1.amazonaws.com/khaleel-strapi-app:latest"
 }
 
-#################################
-# Environment
-#################################
 variable "environment" {
   description = "Deployment environment name"
   type        = string
   default     = "production"
 }
 
-#################################
-# Strapi Application Port
-#################################
 variable "strapi_port" {
   description = "Port on which Strapi runs inside the container"
   type        = number
   default     = 1337
 }
 
-#################################
-# RDS Configuration (Used Elsewhere)
-#################################
 variable "db_instance_class" {
   description = "RDS instance class"
   type        = string
