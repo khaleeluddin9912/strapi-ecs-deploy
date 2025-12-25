@@ -40,8 +40,7 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   execution_role_arn = data.aws_iam_role.ecs_execution.arn
   task_role_arn      = data.aws_iam_role.ecs_execution.arn
 
-  container_definitions = file("${path.root}/.aws/task-definition.json")
-
+  container_definitions = file("${path.module}/../.aws/task-definition.json")
 
   depends_on = [
     aws_cloudwatch_log_group.ecs_strapi
