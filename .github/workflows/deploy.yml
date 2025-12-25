@@ -69,21 +69,17 @@ jobs:
       - name: Register new task definition
         run: |
           sed "s|IMAGE_PLACEHOLDER|${{ needs.build.outputs.image }}|g" .aws/task-definition.json > task-def.json
-          aws ecs register-task-definition --cli-input-json file://task-def.json
-
-      - name: Get task definition ARN
-        run: |
-          ARN=$(aws ecs describe-task-definition \
-            --task-definition khaleel-strapi-task \
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-def.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
-          echo "TASK_DEF_ARN=$ARN" >> $GITHUB_ENV
+          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
 
       - name: Prepare AppSpec
         run: |
           sed "s|<TASK_DEFINITION>|${TASK_DEF_ARN}|g" .aws/appspec.yaml > appspec-final.yaml
 
-      - name: Upload to S3
+      - name: Upload AppSpec to S3
         run: |
           TS=$(date +%Y%m%d%H%M%S)
           aws s3 cp appspec-final.yaml s3://$S3_BUCKET/deployments/$TS/appspec.yaml

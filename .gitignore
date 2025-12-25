@@ -14,7 +14,7 @@ Terraform/.terraform.lock.hcl
 
 # Docker logs or environment files
 *.log
-*.env
+
 
 # VSCode
 .vscode/
