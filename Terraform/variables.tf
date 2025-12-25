@@ -35,21 +35,6 @@ variable "strapi_port" {
 }
 
 #################################
-# ECS Task Resources (Fargate)
-#################################
-variable "ecs_task_cpu" {
-  description = "CPU units for ECS Fargate task"
-  type        = number
-  default     = 512
-}
-
-variable "ecs_task_memory" {
-  description = "Memory (MiB) for ECS Fargate task"
-  type        = number
-  default     = 1024
-}
-
-#################################
 # RDS Configuration (Used Elsewhere)
 #################################
 variable "db_instance_class" {
