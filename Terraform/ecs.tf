@@ -61,8 +61,15 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
         { name = "NODE_ENV", value = "production" },
         { name = "HOST", value = "0.0.0.0" },
         { name = "PORT", value = tostring(var.strapi_port) },
+
+        { name = "DATABASE_CLIENT", value = "postgres" },
         { name = "DATABASE_HOST", value = aws_db_instance.strapi_db.address },
+        { name = "DATABASE_PORT", value = "5432" },
+        { name = "DATABASE_NAME", value = var.db_name },
+        { name = "DATABASE_USERNAME", value = var.db_username },
         { name = "DATABASE_PASSWORD", value = random_password.db_password.result },
+        { name = "DATABASE_SSL", value = "false" },
+
         { name = "APP_KEYS", value = "REPLACE_WITH_REAL_APP_KEYS" },
         { name = "API_TOKEN_SALT", value = "REPLACE_WITH_REAL_API_TOKEN" },
         { name = "ADMIN_JWT_SECRET", value = "REPLACE_WITH_REAL_ADMIN_JWT" },
