@@ -77,7 +77,7 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
     container_port   = 1337
   }
 
-  deployment_minimum_healthy_percent = 100
+  deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
 
   lifecycle {
