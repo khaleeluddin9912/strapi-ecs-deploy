@@ -23,45 +23,70 @@ jobs:
         working-directory: Terraform
     steps:
       - uses: actions/checkout@v4
-
       - uses: hashicorp/setup-terraform@v2
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
       - run: terraform init
       - run: terraform apply -auto-approve
 
+  # ------------------ WAIT FOR RDS ------------------
+  wait-for-rds:
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Wait for RDS to be available
+        run: |
+          echo "⏳ Waiting for RDS database to become available..."
+          for i in {1..30}; do
+            STATUS=$(aws rds describe-db-instances \
+              --db-instance-identifier "khaleel-strapi-db" \
+              --query "DBInstances[0].DBInstanceStatus" \
+              --output text 2>/dev/null || echo "not-found")
+            
+            echo "Attempt $i/30: Status = $STATUS"
+            
+            if [ "$STATUS" = "available" ]; then
+              echo "✅ RDS is ready!"
+              exit 0
+            fi
+            
+            sleep 30
+          done
+          
+          echo "❌ ERROR: RDS never became available after 15 minutes"
+          exit 1
+
   # ------------------ BUILD & PUSH IMAGE ------------------
   build:
-    needs: terraform
+    needs: wait-for-rds
     runs-on: ubuntu-latest
     outputs:
       image_uri: ${{ steps.build.outputs.image_uri }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-
       - uses: aws-actions/amazon-ecr-login@v2
-
       - name: Build & Push Docker Image
         id: build
         run: |
           IMAGE_SHA="$ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}"
           IMAGE_LATEST="$ECR_REGISTRY/$ECR_REPOSITORY:latest"
-
           docker build -t $IMAGE_SHA -t $IMAGE_LATEST .
           docker push $IMAGE_SHA
           docker push $IMAGE_LATEST
-
           echo "image_uri=$IMAGE_SHA" >> $GITHUB_OUTPUT
 
   # ------------------ ECS BLUE/GREEN DEPLOY ------------------
@@ -70,14 +95,42 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+      
+      # ADDED: Download Terraform state from previous job
+      - name: Download Terraform state
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-state
+          path: Terraform/
 
-      # ADD THIS STEP: Get RDS endpoint
+      # UPDATED: Get Database Password from Terraform State
+      - name: Get Database Password
+        id: get-db-password
+        run: |
+          echo "Looking for password in Terraform state..."
+          
+          # Extract password from random_password resource in terraform.tfstate
+          PASSWORD=$(grep -A5 -B5 '"resources":\[{' Terraform/terraform.tfstate | \
+                     grep -A10 '"type":"random_password"' | \
+                     grep '"result":' | \
+                     head -1 | \
+                     sed 's/.*"result":"\([^"]*\)".*/\1/')
+          
+          if [ -n "$PASSWORD" ]; then
+            echo "✅ Found password in Terraform state"
+            echo "DB_PASSWORD=$PASSWORD" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Could not extract password from Terraform state"
+            echo "⚠️ Falling back to GitHub Secret"
+            echo "DB_PASSWORD=${{ secrets.STRAPI_DB_PASSWORD }}" >> $GITHUB_OUTPUT
+          fi
+
+      # Get RDS endpoint
       - name: Get RDS endpoint
         id: get-rds
         run: |
@@ -85,15 +138,28 @@ jobs:
             --db-instance-identifier "khaleel-strapi-db" \
             --query "DBInstances[0].Endpoint.Address" \
             --output text)
+          echo "RDS Endpoint: $RDS_ENDPOINT"
           echo "RDS_ENDPOINT=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
 
+      # Register task definition
       - name: Register new task definition
         run: |
-          # UPDATE THIS LINE: Replace all 3 placeholders
           sed -e "s|IMAGE_URI|${{ needs.build.outputs.image_uri }}|g" \
               -e "s|YOUR_RDS_ENDPOINT|${{ steps.get-rds.outputs.RDS_ENDPOINT }}|g" \
-              -e "s|YOUR_DB_PASSWORD|${{ secrets.STRAPI_DB_PASSWORD }}|g" \
+              -e "s|YOUR_DB_PASSWORD|${{ steps.get-db-password.outputs.DB_PASSWORD }}|g" \
               .aws/task-definition.json > task-def.json
+          
+          # DEBUG: Show database values were replaced
+          echo "=== Verifying replacements ==="
+          echo "DATABASE_HOST value:"
+          grep '"DATABASE_HOST"' task-def.json
+          echo "DATABASE_PASSWORD replaced:"
+          if grep -q "YOUR_DB_PASSWORD" task-def.json; then
+            echo "❌ ERROR: YOUR_DB_PASSWORD was NOT replaced!"
+            exit 1
+          else
+            echo "✅ DATABASE_PASSWORD was properly replaced"
+          fi
           
           aws ecs register-task-definition --cli-input-json file://task-def.json
 
@@ -109,15 +175,32 @@ jobs:
         run: |
           sed "s|TASK_DEFINITION|${TASK_DEF_ARN}|g" .aws/appspec.yaml > appspec-final.yaml
 
-      - name: Upload AppSpec to S3
+      # Create ZIP bundle with AppSpec + Task Definition
+      - name: Create deployment bundle (ZIP)
+        run: |
+          mkdir -p deploy-bundle
+          cp appspec-final.yaml deploy-bundle/appspec.yaml
+          cp task-def.json deploy-bundle/taskdef.json
+          cd deploy-bundle
+          zip -r ../deploy-bundle.zip .
+          cd ..
+          echo "✅ Bundle created with contents:"
+          unzip -l deploy-bundle.zip
+
+      # Upload ZIP bundle to S3
+      - name: Upload deployment bundle to S3
         run: |
           TS=$(date +%Y%m%d%H%M%S)
-          aws s3 cp appspec-final.yaml s3://$S3_BUCKET/deployments/$TS/appspec.yaml
-          echo "S3_KEY=deployments/$TS/appspec.yaml" >> $GITHUB_ENV
+          S3_KEY="deployments/$TS/deploy-bundle.zip"
+          aws s3 cp deploy-bundle.zip s3://$S3_BUCKET/$S3_KEY
+          echo "✅ Bundle uploaded to: s3://$S3_BUCKET/$S3_KEY"
+          echo "S3_BUCKET=$S3_BUCKET" >> $GITHUB_ENV
+          echo "S3_KEY=$S3_KEY" >> $GITHUB_ENV
 
+      # Trigger CodeDeploy with ZIP bundle
       - name: Trigger CodeDeploy Deployment
         run: |
           aws deploy create-deployment \
             --application-name khaleel-strapi-app \
             --deployment-group-name khaleel-strapi-dg \
-            --revision "revisionType=S3,s3Location={bucket=$S3_BUCKET,key=$S3_KEY,bundleType=YAML}"
+            --revision "revisionType=S3,s3Location={bucket=${{ env.S3_BUCKET }},key=${{ env.S3_KEY }},bundleType=zip}"
