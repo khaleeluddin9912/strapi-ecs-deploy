@@ -75,19 +75,21 @@ jobs:
             --output text)
           echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
 
-      - name: Prepare AppSpec
+      - name: Prepare AppSpec bundle
         run: |
-          sed "s|<TASK_DEFINITION>|${TASK_DEF_ARN}|g" .aws/appspec.yaml > appspec-final.yaml
+          mkdir bundle
+          sed "s|<TASK_DEFINITION>|${TASK_DEF_ARN}|g" .aws/appspec.yaml > bundle/appspec.yaml
+          zip -r appspec.zip bundle
 
-      - name: Upload AppSpec to S3
+      - name: Upload AppSpec bundle to S3
         run: |
           TS=$(date +%Y%m%d%H%M%S)
-          aws s3 cp appspec-final.yaml s3://$S3_BUCKET/deployments/$TS/appspec.yaml
-          echo "S3_KEY=deployments/$TS/appspec.yaml" >> $GITHUB_ENV
+          aws s3 cp appspec.zip s3://$S3_BUCKET/deployments/$TS/appspec.zip
+          echo "S3_KEY=deployments/$TS/appspec.zip" >> $GITHUB_ENV
 
       - name: Trigger CodeDeploy
         run: |
           aws deploy create-deployment \
             --application-name khaleel-strapi-app \
             --deployment-group-name khaleel-strapi-dg \
-            --revision "revisionType=S3,s3Location={bucket=$S3_BUCKET,key=$S3_KEY,bundleType=YAML}"
+            --revision "revisionType=S3,s3Location={bucket=$S3_BUCKET,key=$S3_KEY,bundleType=zip}"
