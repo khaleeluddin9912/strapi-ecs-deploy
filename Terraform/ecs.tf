@@ -8,7 +8,7 @@ data "aws_ecr_repository" "khaleel_strapi_app" {
 }
 
 #################################
-# CloudWatch Log Group (REQUIRED)
+# CloudWatch Log Group
 #################################
 resource "aws_cloudwatch_log_group" "ecs_strapi" {
   name              = "/ecs/khaleel-strapi-app"
@@ -40,52 +40,11 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   execution_role_arn = data.aws_iam_role.ecs_execution.arn
   task_role_arn      = data.aws_iam_role.ecs_execution.arn
 
+  container_definitions = file("${path.module}/.aws/task-definition.json")
+
   depends_on = [
     aws_cloudwatch_log_group.ecs_strapi
   ]
-
-  container_definitions = jsonencode([
-    {
-      name      = "khaleel-strapi-container"
-      image     = var.image_uri
-      essential = true
-
-      portMappings = [
-        {
-          containerPort = var.strapi_port
-          protocol      = "tcp"
-        }
-      ]
-
-      environment = [
-        { name = "NODE_ENV", value = "production" },
-        { name = "HOST", value = "0.0.0.0" },
-        { name = "PORT", value = tostring(var.strapi_port) },
-
-        { name = "DATABASE_CLIENT", value = "postgres" },
-        { name = "DATABASE_HOST", value = aws_db_instance.strapi_db.address },
-        { name = "DATABASE_PORT", value = "5432" },
-        { name = "DATABASE_NAME", value = var.db_name },
-        { name = "DATABASE_USERNAME", value = var.db_username },
-        { name = "DATABASE_PASSWORD", value = random_password.db_password.result },
-        { name = "DATABASE_SSL", value = "false" },
-
-        { name = "APP_KEYS", value = "REPLACE_WITH_REAL_APP_KEYS" },
-        { name = "API_TOKEN_SALT", value = "REPLACE_WITH_REAL_API_TOKEN" },
-        { name = "ADMIN_JWT_SECRET", value = "REPLACE_WITH_REAL_ADMIN_JWT" },
-        { name = "JWT_SECRET", value = "REPLACE_WITH_REAL_JWT_SECRET" }
-      ]
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = "/ecs/khaleel-strapi-app"
-          awslogs-region        = var.aws_region
-          awslogs-stream-prefix = "ecs"
-        }
-      }
-    }
-  ])
 }
 
 #################################
@@ -115,8 +74,11 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
   load_balancer {
     target_group_arn = aws_lb_target_group.strapi_blue.arn
     container_name   = "khaleel-strapi-container"
-    container_port   = var.strapi_port
+    container_port   = 1337
   }
+
+  deployment_minimum_healthy_percent = 100
+  deployment_maximum_percent         = 100
 
   lifecycle {
     ignore_changes = [
