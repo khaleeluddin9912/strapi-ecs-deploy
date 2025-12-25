@@ -7,7 +7,17 @@ data "aws_ecr_repository" "khaleel_strapi_app" {
   name = "khaleel-strapi-app"
 }
 
+#################################
+# CloudWatch Log Group (REQUIRED)
+#################################
+resource "aws_cloudwatch_log_group" "ecs_strapi" {
+  name              = "/ecs/khaleel-strapi-app"
+  retention_in_days = 7
+}
+
+#################################
 # ECS Cluster
+#################################
 resource "aws_ecs_cluster" "khaleel_strapi_cluster" {
   name = "khaleel-strapi-cluster"
 
@@ -17,7 +27,9 @@ resource "aws_ecs_cluster" "khaleel_strapi_cluster" {
   }
 }
 
+#################################
 # ECS Task Definition
+#################################
 resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   family                   = "khaleel-strapi-task"
   requires_compatibilities = ["FARGATE"]
@@ -28,6 +40,10 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   execution_role_arn = data.aws_iam_role.ecs_execution.arn
   task_role_arn      = data.aws_iam_role.ecs_execution.arn
 
+  depends_on = [
+    aws_cloudwatch_log_group.ecs_strapi
+  ]
+
   container_definitions = jsonencode([
     {
       name      = "khaleel-strapi-container"
@@ -35,7 +51,10 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
       essential = true
 
       portMappings = [
-        { containerPort = var.strapi_port, protocol = "tcp" }
+        {
+          containerPort = var.strapi_port
+          protocol      = "tcp"
+        }
       ]
 
       environment = [
@@ -58,19 +77,13 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
           awslogs-stream-prefix = "ecs"
         }
       }
-
-      healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:${var.strapi_port} || exit 1"]
-        interval    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 60
-      }
     }
   ])
 }
 
-# ECS Service (Blue/Green with CodeDeploy)
+#################################
+# ECS Service (Blue/Green CodeDeploy)
+#################################
 resource "aws_ecs_service" "khaleel_strapi_service" {
   name            = "khaleel-strapi-service"
   cluster         = aws_ecs_cluster.khaleel_strapi_cluster.id
@@ -99,6 +112,9 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
   }
 
   lifecycle {
-    ignore_changes = [task_definition, load_balancer]
+    ignore_changes = [
+      task_definition,
+      load_balancer
+    ]
   }
 }
