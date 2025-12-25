@@ -1,15 +1,23 @@
+#################################
+# ECS Configuration
+#################################
+
+# Existing ECR Repository
 data "aws_ecr_repository" "khaleel_strapi_app" {
   name = "khaleel-strapi-app"
 }
 
+# ECS Cluster
 resource "aws_ecs_cluster" "khaleel_strapi_cluster" {
   name = "khaleel-strapi-cluster"
+
   setting {
     name  = "containerInsights"
     value = "enabled"
   }
 }
 
+# ECS Task Definition
 resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   family                   = "khaleel-strapi-task"
   requires_compatibilities = ["FARGATE"]
@@ -20,17 +28,49 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   execution_role_arn = data.aws_iam_role.ecs_execution.arn
   task_role_arn      = data.aws_iam_role.ecs_execution.arn
 
-  container_definitions = templatefile("${path.module}/.aws/task-definition.json", {
-    IMAGE_URI        = var.image_uri
-    DATABASE_HOST    = aws_db_instance.strapi_db.address
-    DATABASE_PASS    = random_password.db_password.result
-    APP_KEYS         = "REPLACE_WITH_REAL_APP_KEYS"
-    API_TOKEN_SALT   = "REPLACE_WITH_REAL_API_TOKEN"
-    ADMIN_JWT_SECRET = "REPLACE_WITH_REAL_ADMIN_JWT"
-    JWT_SECRET       = "REPLACE_WITH_REAL_JWT_SECRET"
-  })
+  container_definitions = jsonencode([
+    {
+      name      = "khaleel-strapi-container"
+      image     = var.image_uri
+      essential = true
+
+      portMappings = [
+        { containerPort = var.strapi_port, protocol = "tcp" }
+      ]
+
+      environment = [
+        { name = "NODE_ENV", value = "production" },
+        { name = "HOST", value = "0.0.0.0" },
+        { name = "PORT", value = tostring(var.strapi_port) },
+        { name = "DATABASE_HOST", value = aws_db_instance.strapi_db.address },
+        { name = "DATABASE_PASSWORD", value = random_password.db_password.result },
+        { name = "APP_KEYS", value = "REPLACE_WITH_REAL_APP_KEYS" },
+        { name = "API_TOKEN_SALT", value = "REPLACE_WITH_REAL_API_TOKEN" },
+        { name = "ADMIN_JWT_SECRET", value = "REPLACE_WITH_REAL_ADMIN_JWT" },
+        { name = "JWT_SECRET", value = "REPLACE_WITH_REAL_JWT_SECRET" }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = "/ecs/khaleel-strapi-app"
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:${var.strapi_port} || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
+      }
+    }
+  ])
 }
 
+# ECS Service (Blue/Green with CodeDeploy)
 resource "aws_ecs_service" "khaleel_strapi_service" {
   name            = "khaleel-strapi-service"
   cluster         = aws_ecs_cluster.khaleel_strapi_cluster.id
@@ -38,7 +78,9 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
   desired_count   = 1
   launch_type     = "FARGATE"
 
-  deployment_controller { type = "CODE_DEPLOY" }
+  deployment_controller {
+    type = "CODE_DEPLOY"
+  }
 
   health_check_grace_period_seconds = 120
   enable_execute_command            = true
@@ -53,8 +95,10 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
   load_balancer {
     target_group_arn = aws_lb_target_group.strapi_blue.arn
     container_name   = "khaleel-strapi-container"
-    container_port   = 1337
+    container_port   = var.strapi_port
   }
 
-  lifecycle { ignore_changes = [task_definition, load_balancer] }
+  lifecycle {
+    ignore_changes = [task_definition, load_balancer]
+  }
 }
