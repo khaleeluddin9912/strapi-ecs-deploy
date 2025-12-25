@@ -1,20 +1,5 @@
 #################################
-# 1. Use existing ECR Repository
-#################################
-data "aws_ecr_repository" "khaleel_strapi_app" {
-  name = "khaleel-strapi-app"
-}
-
-#################################
-# 2. CloudWatch Log Group
-#################################
-resource "aws_cloudwatch_log_group" "khaleel_strapi_logs" {
-  name              = "/ecs/khaleel-strapi-app"
-  retention_in_days = 7
-}
-
-#################################
-# 3. ECS Cluster
+# ECS Cluster
 #################################
 resource "aws_ecs_cluster" "khaleel_strapi_cluster" {
   name = "khaleel-strapi-cluster"
@@ -26,7 +11,7 @@ resource "aws_ecs_cluster" "khaleel_strapi_cluster" {
 }
 
 #################################
-# 4. ECS Task Definition (Dynamic Image)
+# ECS Task Definition
 #################################
 resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   family                   = "khaleel-strapi-task"
@@ -34,55 +19,58 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   network_mode             = "awsvpc"
   cpu                      = "512"
   memory                   = "1024"
-  execution_role_arn       = data.aws_iam_role.ecs_execution.arn
-  task_role_arn            = data.aws_iam_role.ecs_execution.arn
 
-  container_definitions = jsonencode([{
-    name      = "khaleel-strapi-container"
-    image     = var.image_uri  # <- dynamic from GitHub Actions
-    essential = true
-    cpu       = 256
-    memory    = 512
+  execution_role_arn = data.aws_iam_role.ecs_execution.arn
+  task_role_arn      = data.aws_iam_role.ecs_execution.arn
 
-    portMappings = [{
-      containerPort = 1337
-      hostPort      = 1337
-      protocol      = "tcp"
-    }]
+  container_definitions = jsonencode([
+    {
+      name      = "khaleel-strapi-container"
+      image     = var.image_uri
+      essential = true
 
-    healthCheck = {
-      command     = ["CMD-SHELL", "curl -f http://localhost:1337 || exit 1"]
-      interval    = 30
-      timeout     = 5
-      retries     = 3
-      startPeriod = 60
-    }
+      portMappings = [
+        {
+          containerPort = 1337
+          protocol      = "tcp"
+        }
+      ]
 
-    environment = [
-      { name = "NODE_ENV", value = "production" },
-      { name = "HOST", value = "0.0.0.0" },
-      { name = "PORT", value = "1337" },
-      { name = "DATABASE_CLIENT", value = "postgres" },
-      { name = "DATABASE_HOST", value = "RDS-ENDPOINT-HERE" },        # replace with actual RDS endpoint
-      { name = "DATABASE_PORT", value = "5432" },
-      { name = "DATABASE_NAME", value = "strapidb" },
-      { name = "DATABASE_USERNAME", value = "strapiadmin" },
-      { name = "DATABASE_PASSWORD", value = "YOUR-RDS-PASSWORD" }     # replace with actual password
-    ]
+      environment = [
+        { name = "NODE_ENV", value = "production" },
+        { name = "HOST", value = "0.0.0.0" },
+        { name = "PORT", value = "1337" },
 
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.khaleel_strapi_logs.name
-        awslogs-region        = "ap-south-1"
-        awslogs-stream-prefix = "ecs"
+        { name = "DATABASE_CLIENT", value = "postgres" },
+        { name = "DATABASE_HOST", value = "khaleel-strapi-db.cxxxx.ap-south-1.rds.amazonaws.com" },
+        { name = "DATABASE_PORT", value = "5432" },
+        { name = "DATABASE_NAME", value = "strapidb" },
+        { name = "DATABASE_USERNAME", value = "strapiadmin" },
+        { name = "DATABASE_PASSWORD", value = "REPLACE_WITH_REAL_PASSWORD" }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = "/ecs/khaleel-strapi-app"
+          awslogs-region        = "ap-south-1"
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "curl -f http://localhost:1337 || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 60
       }
     }
-  }])
+  ])
 }
 
 #################################
-# 5. ECS Service (Blue/Green)
+# ECS Service (CodeDeploy Blue/Green)
 #################################
 resource "aws_ecs_service" "khaleel_strapi_service" {
   name            = "khaleel-strapi-service"
@@ -117,10 +105,4 @@ resource "aws_ecs_service" "khaleel_strapi_service" {
       load_balancer
     ]
   }
-
-  depends_on = [
-    aws_lb_target_group.strapi_blue,
-    aws_lb_target_group.strapi_green,
-    aws_lb_listener.http
-  ]
 }

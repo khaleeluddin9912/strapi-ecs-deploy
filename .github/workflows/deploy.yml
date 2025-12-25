@@ -14,7 +14,7 @@ env:
   S3_BUCKET: bucket-mku
 
 jobs:
-# ------------------ TERRAFORM ------------------
+# ------------------ TERRAFORM (INFRA ONLY) ------------------
   terraform:
     runs-on: ubuntu-latest
     defaults:
@@ -22,74 +22,100 @@ jobs:
         working-directory: Terraform
     steps:
       - uses: actions/checkout@v4
+
       - uses: hashicorp/setup-terraform@v2
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-      - run: terraform init
-      - run: terraform apply -auto-approve
 
-# ------------------ BUILD & PUSH ------------------
+      - run: terraform init
+      - run: terraform apply -auto-approve -var="image_uri=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:dummy"
+
+# ------------------ BUILD & PUSH IMAGE ------------------
   build:
     needs: terraform
     runs-on: ubuntu-latest
     outputs:
-      image: ${{ steps.build_image.outputs.image }}
+      image_uri: ${{ steps.build.outputs.image_uri }}
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+
       - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & Push Image
-        id: build_image
+      - name: Build & Push Docker Image
+        id: build
         run: |
-          IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
-          docker build -t $IMAGE .
-          docker push $IMAGE
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}"
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-# ------------------ DEPLOY ------------------
+# ------------------ CODEDEPLOY BLUE/GREEN ------------------
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Register new task definition
+      - name: Fetch current task definition
         run: |
-          sed "s|IMAGE_PLACEHOLDER|${{ needs.build.outputs.image }}|g" .aws/task-definition.json > task-def.json
-          TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://task-def.json \
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          aws ecs describe-task-definition \
+            --task-definition $TASK_DEF_ARN \
+            --query 'taskDefinition' > taskdef.json
+
+      - name: Register new task definition revision
+        run: |
+          jq \
+            --arg IMAGE "${{ needs.build.outputs.image_uri }}" \
+            '.containerDefinitions[0].image=$IMAGE
+             | del(.taskDefinitionArn,.revision,.status,.registeredAt,.registeredBy,.requiresAttributes,.compatibilities)' \
+            taskdef.json > new-taskdef.json
+
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-taskdef.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
-          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
 
-      - name: Prepare AppSpec bundle
+          echo "NEW_TASK_DEF_ARN=$NEW_TASK_DEF_ARN" >> $GITHUB_ENV
+
+      - name: Create AppSpec bundle
         run: |
-          mkdir bundle
-          sed "s|<TASK_DEFINITION>|${TASK_DEF_ARN}|g" .aws/appspec.yaml > bundle/appspec.yaml
+          mkdir -p bundle
+          sed "s|<TASK_DEFINITION>|$NEW_TASK_DEF_ARN|g" .aws/appspec.yaml > bundle/appspec.yaml
           zip -r appspec.zip bundle
 
-      - name: Upload AppSpec bundle to S3
+      - name: Upload AppSpec to S3
         run: |
           TS=$(date +%Y%m%d%H%M%S)
           aws s3 cp appspec.zip s3://$S3_BUCKET/deployments/$TS/appspec.zip
           echo "S3_KEY=deployments/$TS/appspec.zip" >> $GITHUB_ENV
 
-      - name: Trigger CodeDeploy
+      - name: Trigger CodeDeploy Deployment
         run: |
           aws deploy create-deployment \
             --application-name khaleel-strapi-app \
             --deployment-group-name khaleel-strapi-dg \
-            --revision "revisionType=S3,s3Location={bucket=$S3_BUCKET,key=$S3_KEY,bundleType=zip}"
+            --revision revisionType=S3,s3Location={bucket=$S3_BUCKET,key=$S3_KEY,bundleType=zip}
