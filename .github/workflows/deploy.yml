@@ -77,9 +77,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ADD THIS STEP: Get RDS endpoint
+      - name: Get RDS endpoint
+        id: get-rds
+        run: |
+          RDS_ENDPOINT=$(aws rds describe-db-instances \
+            --db-instance-identifier "khaleel-strapi-db" \
+            --query "DBInstances[0].Endpoint.Address" \
+            --output text)
+          echo "RDS_ENDPOINT=$RDS_ENDPOINT" >> $GITHUB_OUTPUT
+
       - name: Register new task definition
         run: |
-          sed "s|IMAGE_URI|${{ needs.build.outputs.image_uri }}|g" .aws/task-definition.json > task-def.json
+          # UPDATE THIS LINE: Replace all 3 placeholders
+          sed -e "s|IMAGE_URI|${{ needs.build.outputs.image_uri }}|g" \
+              -e "s|YOUR_RDS_ENDPOINT|${{ steps.get-rds.outputs.RDS_ENDPOINT }}|g" \
+              -e "s|YOUR_DB_PASSWORD|${{ secrets.STRAPI_DB_PASSWORD }}|g" \
+              .aws/task-definition.json > task-def.json
+          
           aws ecs register-task-definition --cli-input-json file://task-def.json
 
       - name: Get task definition ARN

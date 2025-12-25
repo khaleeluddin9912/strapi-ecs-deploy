@@ -17,3 +17,15 @@ output "ecs_service_name" {
   description = "ECS Service Name"
   value       = aws_ecs_service.khaleel_strapi_service.name
 }
+
+# NEW: Add these outputs
+output "rds_endpoint" {
+  description = "RDS endpoint for Strapi database"
+  value       = aws_db_instance.strapi_db.endpoint
+  sensitive   = true
+}
+
+output "database_name" {
+  description = "Strapi database name"
+  value       = aws_db_instance.strapi_db.db_name
+}
