@@ -83,11 +83,21 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # Prepare AppSpec (Terraform already controls task definition)
+      # Get full TaskDefinition ARN
+      - name: Get ECS TaskDefinition ARN
+        id: taskdef
+        run: |
+          TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition khaleel-strapi-task \
+            --query "taskDefinition.taskDefinitionArn" --output text)
+          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
+          echo "✅ TaskDefinition ARN: $TASK_DEF_ARN"
+
+      # Prepare AppSpec
       - name: Prepare AppSpec
         run: |
           cp .aws/appspec.yaml appspec-final.yaml
-          echo "✅ AppSpec prepared"
+          sed -i "s|<TASK_DEFINITION_ARN>|$TASK_DEF_ARN|g" appspec-final.yaml
+          echo "✅ AppSpec prepared with correct TaskDefinition ARN"
 
       # Create deployment bundle
       - name: Create deployment bundle
@@ -112,4 +122,4 @@ jobs:
           aws deploy create-deployment \
             --application-name khaleel-strapi-app \
             --deployment-group-name khaleel-strapi-dg \
-            --revision "revisionType=S3,s3Location={bucket=$S3_BUCKET,key=$S3_KEY,bundleType=zip}"
+            --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY
