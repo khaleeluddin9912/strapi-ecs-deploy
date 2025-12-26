@@ -57,7 +57,9 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
         { name = "DATABASE_PORT", value = "5432" },
         { name = "DATABASE_NAME", value = var.db_name },
         { name = "DATABASE_USERNAME", value = var.db_username },
-        { name = "DATABASE_PASSWORD", value = random_password.db_password.result }
+        { name = "DATABASE_PASSWORD", value = random_password.db_password.result },
+        { name = "DATABASE_SSL", value = "true" },
+        { name = "DATABASE_SSL_REJECT_UNAUTHORIZED", value = "false" }
       ]
 
       logConfiguration = {
