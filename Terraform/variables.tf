@@ -57,3 +57,9 @@ variable "db_instance_class" {
   type        = string
   default     = "db.t3.micro"
 }
+
+variable "db_password" {
+  description = "Strapi DB password"
+  type        = string
+  default     = "" 
+}
