@@ -28,7 +28,7 @@ resource "aws_ecs_cluster" "khaleel_strapi_cluster" {
 }
 
 #################################
-# ECS Task Definition
+# ECS Task Definition (FIXED)
 #################################
 resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   family                   = "khaleel-strapi-task"
@@ -40,10 +40,40 @@ resource "aws_ecs_task_definition" "khaleel_strapi_task" {
   execution_role_arn = data.aws_iam_role.ecs_execution.arn
   task_role_arn      = data.aws_iam_role.ecs_execution.arn
 
-  container_definitions = file("${path.module}/../.aws/task-definition-terraform.json")
+  container_definitions = jsonencode([
+    {
+      name      = "khaleel-strapi-container"
+      image     = "${data.aws_ecr_repository.khaleel_strapi_app.repository_url}:latest"
+      essential = true
+
+      portMappings = [
+        { containerPort = 1337, protocol = "tcp" }
+      ]
+
+      environment = [
+        { name = "NODE_ENV", value = var.environment },
+        { name = "DATABASE_CLIENT", value = "postgres" },
+        { name = "DATABASE_HOST", value = aws_db_instance.strapi_db.address },
+        { name = "DATABASE_PORT", value = "5432" },
+        { name = "DATABASE_NAME", value = var.db_name },
+        { name = "DATABASE_USERNAME", value = var.db_username },
+        { name = "DATABASE_PASSWORD", value = random_password.db_password.result }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.ecs_strapi.name
+          awslogs-region        = var.aws_region
+          awslogs-stream-prefix = "ecs"
+        }
+      }
+    }
+  ])
 
   depends_on = [
-    aws_cloudwatch_log_group.ecs_strapi
+    aws_cloudwatch_log_group.ecs_strapi,
+    aws_db_instance.strapi_db
   ]
 }
 

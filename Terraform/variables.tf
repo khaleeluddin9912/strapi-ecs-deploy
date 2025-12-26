@@ -52,6 +52,13 @@ variable "db_username" {
   default     = "strapiadmin"
 }
 
+variable "db_password" {
+  description = "Strapi DB password"
+  type        = string
+  sensitive   = true
+}
+
+
 variable "db_instance_class" {
   description = "RDS instance class"
   type        = string
